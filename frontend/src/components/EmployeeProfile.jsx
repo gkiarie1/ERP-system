@@ -13,7 +13,7 @@ const EmployeeProfile = () => {
 
   useEffect(() => {
     const token = localStorage.getItem('token');
-    fetch('http://localhost:5000/employee/profile', {
+    fetch('http://localhost:9988/employee/profile', {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then(response => response.json())
