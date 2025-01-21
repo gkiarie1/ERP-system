@@ -1,6 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
 import { io } from "socket.io-client";
-import DatePicker from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
 
 const AdminDashboard = () => {
@@ -14,66 +13,66 @@ const AdminDashboard = () => {
     email: "",
     role: "employee",
     password: "",
+    staff_id: "",
   });
-
-  const [editingId, setEditingId] = useState(null);
-  const [editedName, setEditedName] = useState("");
-
-  const [selectedDate, setSelectedDate] = useState(null);
-  const [selectedShift, setSelectedShift] = useState("day");
-
-  // Initialize socket connection
-  if (!socketRef.current) {
-    socketRef.current = io("http://localhost:9988", {
-      query: { token: localStorage.getItem("token") },
-    });
-  }
+  const [isModalOpen, setIsModalOpen] = useState(false); 
+  const [selectedEmployee, setSelectedEmployee] = useState(null); 
+  const [warningText, setWarningText] = useState(''); 
 
   useEffect(() => {
-    const socket = socketRef.current;
     const token = localStorage.getItem("token");
 
-    // Fetch employee data
     fetch("http://localhost:9988/admin/dashboard", {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
     })
       .then((response) => response.json())
       .then((data) => {
-        const sortedEmployees = data.attendance.sort((a, b) =>
-          a.clock_in_status === "Clocked In" ? -1 : 1
-        );
-        setEmployees(sortedEmployees || []);
+        setEmployees(data.attendance);
         setLoading(false);
       })
       .catch((err) => {
-        console.error("Error fetching employee data:", err);
+        console.error("Error fetching employees:", err);
         setLoading(false);
       });
 
-    const handleClockIn = (data) => {
+    // Initialize socket connection
+    socketRef.current = io("http://localhost:9988", {
+      query: { token },
+    });
+
+    socketRef.current.on('connect', () => {
+      console.log('Socket connected');
+    });
+
+    socketRef.current.on('connect_error', (error) => {
+      console.error('Socket connection error:', error);
+    });
+
+    socketRef.current.on("employee_created", (data) => {
+      setEmployees((prevEmployees) => {
+        return [...prevEmployees, data.attendance];
+      });
+    });
+
+    socketRef.current.on("employee_clocked_in", (data) => {
       setMessage(`${data.name} has clocked in.`);
-    };
+      setEmployees((prevEmployees) =>
+        prevEmployees.map((emp) =>
+          emp.id === data.id
+            ? { ...emp, clock_in_status: "Clocked In" }
+            : emp
+        )
+      );
+    });
 
-    const handleNewEmployee = (data) => {
-      setEmployees((prev) => [
-        ...prev,
-        { ...data, clock_in_status: "Not Clocked In" },
-      ]);
-    };
-
-    // Register socket event listeners
-    socket.on("employee_clocked_in", handleClockIn);
-    socket.on("employee_created", handleNewEmployee);
-
-    // Clean up on unmount
     return () => {
-      socket.off("employee_clocked_in", handleClockIn);
-      socket.off("employee_created", handleNewEmployee);
-      if (socket.connected) {
-        socket.disconnect();
+      if (socketRef.current.connected) {
+        socketRef.current.disconnect();
       }
     };
-  }, [socketRef]);
+  }, []);
 
   const handleEditField = (id, field, value) => {
     const token = localStorage.getItem("token");
@@ -92,8 +91,6 @@ const AdminDashboard = () => {
         setEmployees((prev) =>
           prev.map((emp) => (emp.id === id ? { ...emp, [field]: value } : emp))
         );
-        setEditingId(null); // Stop editing after save
-        setEditedName(""); // Clear edited name
       })
       .catch((err) => console.error("Error editing employee:", err));
   };
@@ -111,135 +108,122 @@ const AdminDashboard = () => {
       .then((response) => response.json())
       .then((data) => {
         setMessage(data.message);
-        alert("New employee added successfully!"); 
-        setNewEmployee({ name: "", email: "", role: "employee", password: "" });
+        setNewEmployee({ name: "", email: "", role: "employee", password: "", staff_id: "", machine_line: "" });
         setShowAddEmployeeForm(false);
       })
       .catch((err) => console.error("Error creating employee:", err));
   };
 
-  const handleNameBlur = (id) => {
-    if (editedName.trim() === "") return; // Do not submit empty names
-    handleEditField(id, "name", editedName); // Submit the name change
+  const handleAddWarning = (empId) => {
+    const token = localStorage.getItem("token");
+
+    if (!warningText.trim()) {
+      setMessage("Warning text cannot be empty");
+      return;
+    }
+
+    fetch(`http://localhost:9988/employee/${empId}/add-warning`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ warning: warningText }),
+    })
+      .then((response) => response.json())
+      .then((data) => {
+        if (data.message === "Warning added successfully!") {
+          setEmployees((prevEmployees) =>
+            prevEmployees.map((emp) =>
+              emp.id === empId ? { ...emp, warnings: data.warnings } : emp
+            )
+          );
+          setMessage(data.message);
+          setIsModalOpen(false); 
+          setWarningText('');
+        } else {
+          setMessage(data.message);
+        }
+      })
+      .catch((err) => console.error("Error adding warning:", err));
   };
 
   return (
     <div className="dashboard-container">
       <h1 className="dashboard-title">Admin Dashboard</h1>
-
+  
       <button
         className="add-employee-button"
         onClick={() => setShowAddEmployeeForm(true)}
       >
         Add New Employee
       </button>
-
+  
+      {message && <p className="message">{message}</p>}
+  
       {loading ? (
         <p>Loading employees...</p>
       ) : (
         <div className="employee-list">
-          <h2>Employees</h2>
-
-          {/* Header Row */}
           <div className="employee-header-row">
+            <div className="employee-header-cell">Staff ID</div>
             <div className="employee-header-cell">Name</div>
-            <div className="employee-header-cell">Job Schedule</div>
-            <div className="employee-header-cell">Clock-In Status</div>
-            <div className="employee-header-cell">Attendance</div>
-            <div className="employee-header-cell">Leave Days</div>
+            <div className="employee-header-cell">Machine Line</div>
+            <div className="employee-header-cell">Days</div>
+            <div className="employee-header-cell">Clock-In</div>
+            <div className="employee-header-cell">Overtime Hours</div>
             <div className="employee-header-cell">Warnings</div>
-            <div className="employee-header-cell">Skills</div>
+            <div className="employee-header-cell">Contract Details</div>
           </div>
-
-          {/* Employee Rows */}
           {employees.map((emp, index) => (
             <div
-              key={emp.id}
-              className={`employee-row ${
-                index % 2 === 0 ? "even-row" : "odd-row"
-              }`}
+              key={emp.staff_id}
+              className={`employee-row ${index % 2 === 0 ? 'even-row' : 'odd-row'}`}
             >
+              <div className="employee-cell">{emp.staff_id}</div>
               <div className="employee-cell employee-name">
-                {editingId === emp.id ? (
-                  <input
-                    type="text"
-                    value={editedName || emp.name}
-                    onChange={(e) => setEditedName(e.target.value)}
-                    onBlur={() => handleNameBlur(emp.id)} // Submit on blur
-                    autoFocus
-                  />
-                ) : (
-                  <span
-                    onClick={() => {
-                      setEditingId(emp.id);
-                      setEditedName(emp.name);
-                    }}
-                  >
-                    {emp.name}
-                  </span>
-                )}
+                <input
+                  type="text"
+                  value={emp.name}
+                  onChange={(e) =>
+                    handleEditField(emp.id, 'name', e.target.value)
+                  }
+                />
               </div>
               <div className="employee-cell">
-                <div>
-                  <label>Select Date:</label>
-                  <DatePicker
-                    selected={selectedDate}
-                    onChange={(date) => setSelectedDate(date)}
-                    dateFormat="dd-mm-yyyy"
-                  />
-                </div>
-                <div>
-                  <label>Select Shift:</label>
-                  <select
-                    value={selectedShift}
-                    onChange={(e) => setSelectedShift(e.target.value)}
-                  >
-                    <option value="day">Day Shift</option>
-                    <option value="night">Night Shift</option>
-                  </select>
-                </div>
-                <button
-                  onClick={() => {
-                    if (selectedDate) {
-                      const formattedDate = selectedDate.toISOString().split("T")[0];
-                      const jobSchedule = `${formattedDate} (${selectedShift})`;
-                      handleEditField(emp.id, "job_schedule", jobSchedule);
-                    } else {
-                      alert("Please select a date.");
-                    }
-                  }}
-                >
-                  Save
+                <input
+                  type="text"
+                  value={emp.machine_line || ''}
+                  onChange={(e) =>
+                    handleEditField(emp.id, 'machine_line', e.target.value)
+                  }
+                />
+              </div>
+              <div className="employee-cell">
+                <input
+                  type="text"
+                  value={emp.day || ''}
+                  onChange={(e) =>
+                    handleEditField(emp.id, 'leave_day', e.target.value)
+                  }
+                />
+              </div>
+              <div className="employee-cell">{emp.clock_in_status}</div>
+              <div className="employee-cell">{emp.overtime_hours}</div>
+              <div className="employee-cell">
+                <button onClick={() => {
+                  setSelectedEmployee(emp);
+                  setIsModalOpen(true);
+                }}>
+                {emp.warnings ? emp.warnings.length : 0}
                 </button>
               </div>
               <div className="employee-cell">
-                <strong>{emp.clock_in_status}</strong>
-              </div>
-              <div className="employee-cell">{emp.attendance || "N/A"}</div>
-              <div className="employee-cell">
-                <input
-                  type="number"
-                  value={emp.leave_days || 0}
-                  onChange={(e) =>
-                    handleEditField(emp.id, "leave_days", e.target.value)
-                  }
-                />
-              </div>
-              <div className="employee-cell">
                 <input
                   type="text"
-                  value={emp.warnings || ""}
+                  value={emp.contract_details || ''}
                   onChange={(e) =>
-                    handleEditField(emp.id, "warnings", e.target.value)
-                  }
-                />
-              </div>
-              <div className="employee-cell employee-skills">
-                <input
-                  type="text"
-                  value={emp.skills || ""}
-                  onChange={(e) =>
-                    handleEditField(emp.id, "skills", e.target.value)
+                    handleEditField(emp.id, 'contract_details', e.target.value)
                   }
                 />
               </div>
@@ -247,7 +231,7 @@ const AdminDashboard = () => {
           ))}
         </div>
       )}
-
+  
       {showAddEmployeeForm && (
         <div className="add-employee-form">
           <h2>Add New Employee</h2>
@@ -284,8 +268,38 @@ const AdminDashboard = () => {
             <option value="employee">Employee</option>
             <option value="admin">Admin</option>
           </select>
-          <button onClick={handleAddEmployee}>Add Employee</button>
-          <button onClick={() => setShowAddEmployeeForm(false)}>Cancel</button>
+          {newEmployee.role === 'employee' && (
+            <input
+              type="text"
+              placeholder="Machine Line"
+              value={newEmployee.machine_line}
+              onChange={(e) =>
+                setNewEmployee({ ...newEmployee, machine_line: e.target.value })
+              }
+            />
+          )}
+          <button onClick={handleAddEmployee}>Submit</button>
+          <button onClick={() => setShowAddEmployeeForm(false)}>
+            Cancel
+          </button>
+        </div>
+      )}
+
+      {/* Warning Modal */}
+      {isModalOpen && selectedEmployee && (
+        <div className="modal">
+          <h3>Add Warning for {selectedEmployee.name}</h3>
+          <textarea
+            value={warningText}
+            onChange={(e) => setWarningText(e.target.value)}
+            placeholder="Enter warning text here"
+          />
+          <button
+            onClick={() => handleAddWarning(selectedEmployee.id)}
+          >
+            Add Warning
+          </button>
+          <button onClick={() => setIsModalOpen(false)}>Cancel</button>
         </div>
       )}
     </div>

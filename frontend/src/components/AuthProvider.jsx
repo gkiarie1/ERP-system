@@ -32,17 +32,14 @@ export const RequireAuth = ({ children, adminOnly = false }) => {
   const role = localStorage.getItem('role');
 
   useEffect(() => {
-    // Redirect to login if the user is not authenticated
     if (!isAuthenticated) {
       navigate('/login');
     }
-    // Redirect to unauthorized access page if the route is admin-only and the user is not an admin
     if (adminOnly && role !== 'admin') {
       navigate('/unauthorized'); 
     }
   }, [isAuthenticated, role, adminOnly, navigate]);
 
-  // Render the children if authentication checks pass
   if (!isAuthenticated || (adminOnly && role !== 'admin')) {
     return null; // Render nothing until the navigation is complete
   }
